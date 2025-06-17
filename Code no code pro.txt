@@ -1,0 +1,5 @@
+Senha da VM e do Protheus: Universo@2025
+
+URL configuração inicial: http://localhost:9875/rest/well-known/treports/security
+
+Artefatos no github: https://github.com/vanessaruama/universototvs_2025
