@@ -1,0 +1,278 @@
+#include "msobject.ch"
+#include "protheus.ch"
+#include "totvs.framework.treports.integratedprovider.th"
+     
+namespace custom.smartview
+  
+@totvsFrameworkTReportsIntegratedProvider(active=.T., team="Framework", tables="SA5,SA2", name="Produto X Fornecedor", country="ALL", initialRelease="12.1.033", customTables="All")
+//-------------------------------------------------------------------
+/*{Protheus.doc} CustomTReportsBusinessObject
+Classe para criação do Objeto de Negócio de Prod  x Forn para o TReports
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//------------------------------------------------------------------- 
+class CustomTReportsBusinessObject from totvs.framework.treports.integratedprovider.IntegratedProvider
+    public method new() as object
+    public method getDisplayName() as character
+    public method getDescription() as character
+    public method getData() as object
+    public method getSchema() as object
+ 
+    protected data aFields as array
+    protected data aNested as array
+    protected data aStruct as array
+  
+endclass
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} new
+Método de instância da classe
+  
+@return object: self
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------  
+method new() class CustomTReportsBusinessObject
+_Super:new()
+self:appendArea("Framework")
+  
+self:aFields := {"A5_FILIAL", "A5_FORNECE", "A5_LOJA", "A5_NOMEFOR", "A5_PRODUTO", "A5_NOMPROD", "A5_CODPRF"}
+self:aNested := {"A2_NATUREZ", "A2_CGC"}
+self:aStruct := u_getStruct(self:aFields)
+  
+return self
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} getDisplayName
+Retorna o nome de exibição do objeto de negócio
+  
+@return string
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------  
+method getDisplayName() as character class CustomTReportsBusinessObject
+return "Produtos x Fornecedores - Aninhado"
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} getDescription
+Retorna a descrição do objeto de negócio
+  
+@return string
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//------------------------------------------------------------------- 
+method getDescription() as character class CustomTReportsBusinessObject
+return "Produtos x Fornecedores - Aninhado"
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} getData
+Retorna os dados do objeto de negócio
+  
+@param nPage, numérico, indica a página atual do relatório
+@param oFilter, objeto, contém o filtro do TReports
+  
+@return object: self:oData
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------  
+method getData(nPage as numeric, oFilter as object) as object class CustomTReportsBusinessObject
+local cQuery as character
+local cAlias as character
+local nSkip as numeric
+local nCount as numeric
+local nX as numeric
+local jItems as json
+local aPDFields as array
+local aAllFields as array
+local cRealName as character
+local cId as character
+local oExec as object
+   
+nCount := 0
+aAllFields := {}
+ 
+//Manda todos os campos do schema
+cQuery := "SELECT " + self:getSQLFields(,,,.T.) + " FROM " + RetSQLName("SA5")
+cQuery += " SA5 LEFT JOIN " + RetSQLName("SA2") + " SA2 ON SA5.A5_FORNECE = SA2.A2_COD WHERE SA2.D_E_L_E_T_ = ' '"
+  
+//Os filtros serão setados na interface do novo TReports
+if oFilter:hasFilter()
+    cQuery += " AND " + oFilter:getSQLExpression()
+endif
+ 
+self:setPageSize(150)   
+ 
+oExec  := FwExecStatement():New(ChangeQuery(cQuery))
+cAlias := oExec:OpenAlias()    
+ 
+if nPage > 1
+    //Default 100
+    //Encontra a quantidade de itens que irá pular de acordo com a página atual
+    nSkip := ((nPage - 1) * self:getPageSize())    
+   
+    (cAlias)->(dbSkip(nSkip))
+endif 
+   
+//Verifica se precisa fazer o tratamento para LGPD
+aPDFields := FwProtectedDataUtil():UsrAccessPDField(__cUserID, self:getArrayFields())
+lObfuscated := len( aPDFields ) != Len(self:getArrayFields())
+aAllFields := self:getStructFields()
+ 
+while !(cAlias)->(Eof())
+    jItems := JsonObject():new()
+  
+    for nX := 1 To Len(aAllFields)
+        cId := aAllFields[nX]:getName()
+        cRealName := aAllFields[nX]:getRealName()
+        if lObfuscated .and. aScan(aPDFields, cRealName) == 0
+            jItems[cId] := FwProtectedDataUtil():ValueAsteriskToAnonymize((cAlias)->&(cRealName))
+        else
+            if aAllFields[nX]:getType() == "date"
+                jItems[cId] := totvs.framework.treports.date.stringToTimeStamp((cAlias)->&(cRealName))
+            else
+                jItems[cId] := (cAlias)->&(cRealName)
+            endif
+        endif
+ 
+        //Campos aninhados
+        formatNestedJson(cAlias, @jItems)
+    next nX
+  
+    self:oData:appendData(jItems)
+  
+    (cAlias)->(DBSkip())
+    nCount++
+   
+    //Sai do loop quando chegar no tamanho de itens da página
+    if nCount == self:getPageSize()
+      exit
+    endif
+enddo
+   
+//Se não for o último registro indica que terá próxima página
+self:setHasNext(!(cAlias)->(Eof()))
+   
+(cAlias)->(DBCloseArea())
+     
+return self:oData
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} getSchema
+Retorna a estrutura dos campos
+  
+@return object: self:oSchema
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------  
+method getSchema() as object class CustomTReportsBusinessObject
+local nX as numeric
+local aNestedManual as array
+  
+for nX := 1 To Len(self:aStruct)
+    self:addProperty(self:aStruct[nX][1], self:aStruct[nX][2], self:aStruct[nX][3], self:aStruct[nX][4], self:aStruct[nX][5])
+next nX
+ 
+//Propriedade aninhada com campos do SX3
+self:addNestedProperty("Fornecedores", "Fornecedores (SA2)", "Fornecedores (SA2)", "SA2", self:aNested)
+self:addNestedProperty("EnderecoDetalhes", "Detalhes do Endereço", "Detalhes do Endereço", "SA2", {"A2_END", "A2_BAIRRO", "A2_MUN", "A2_CEP"})
+ 
+//Propriedade aninhada com campos manuais
+aNestedManual := Array(0)
+//Posições do array = 1-Id | 2-Description 3-Type 4-DisplayName
+aAdd(aNestedManual, {"Informacao1", "Informação 1", "string", "Informação 1"})
+aAdd(aNestedManual, {"Informacao2", "Informação 2", "string", "Informação 2"})
+ 
+self:addNestedProperty("Info", "Info", "Info",, aNestedManual)
+ 
+return self:oSchema
+  
+//-------------------------------------------------------------------
+/*{Protheus.doc} getStruct
+Prepara a estrutura dos campos
+  
+@param aCpos array: Array com os campos do relatório
+  
+@return array: Array com a estrutura dos campos
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------
+user function getStruct(aCpos)
+Local aDeParaCpo as array
+Local aCpoTmp    as array
+Local cCampo     as character
+Local cCpoQry    as character
+Local cTipR      as character
+Local nPos       as numeric
+Local nC         as numeric
+  
+aDeParaCpo := {{"C", "string"}, {"D", "date"}, {"N", "number"}, {"L", "boolean"}, {"M", "memo"}}
+aCpoTmp    := {}
+  
+for nC := 1 to Len(aCpos)
+    cCpoQry := aCpos[nC]
+    nPos    := AT(".", aCpos[nC]) + 1
+      
+    if nPos > 0
+        cCampo := Substr(cCpoQry, nPos)
+    else
+        cCampo := cCpoQry
+    endif
+      
+    cTipo := GetSx3Cache(cCampo, "X3_TIPO")
+      
+    if (nPos := aScan(aDeParaCpo, {|c| c[01] = cTipo})) > 0
+        cTipR := aDeParaCpo[nPos, 02]
+    else
+        cTipR := "string"
+    endif
+  
+    AAdd(aCpoTmp, {strTran(cCampo, "_", ""), FWSX3Util():GetDescription(cCampo), cTipR, FWSX3Util():GetDescription(cCampo), cCampo})
+next nC
+  
+return (aCpoTmp)
+ 
+//-------------------------------------------------------------------
+/*{Protheus.doc} formatNestedJson
+Formato o json dos objetos aninhados
+  
+@param cAlias charactere: Alias aberto na query
+@param jItems json: Json de resposta na requisição
+  
+@author Vanessa Ruama
+@since 02/03/2023
+@version 1.0
+*/
+//-------------------------------------------------------------------
+static function formatNestedJson(cAlias as character, jItems as json)
+ 
+jItems["Fornecedores"] := {}
+aAdd(jItems["Fornecedores"], {"A2_NATUREZ": (cAlias)->&("A2_NATUREZ"), "A2_CGC": (cAlias)->&("A2_CGC")})  
+jItems["Info"] := {}
+aAdd(jItems["Info"], {"Informacao1":"Info 1", "Informacao2":"Teste 1"})
+aAdd(jItems["Info"], {"Informacao1":"Info 2", "Informacao2":"Teste 2"})
+aAdd(jItems["Info"], {"Informacao1":"Info 3", "Informacao2":"Teste 3"})
+ 
+jItems["EnderecoDetalhes"] := {}
+aAdd(jItems["EnderecoDetalhes"], {"A2_END": (cAlias)->&("A2_END"), "A2_BAIRRO": (cAlias)->&("A2_BAIRRO"), "A2_MUN": (cAlias)->&("A2_MUN"), "A2_CEP": (cAlias)->&("A2_CEP")})
+return
